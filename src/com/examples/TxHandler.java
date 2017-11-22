@@ -1,6 +1,11 @@
 package com.examples;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+
 public class TxHandler {
+
+    private UTXOPool ledger;
 
     /**
      * Creates a public ledger whose current UTXOPool (collection of unspent transaction outputs) is
@@ -8,7 +13,7 @@ public class TxHandler {
      * constructor.
      */
     public TxHandler(UTXOPool utxoPool) {
-        // IMPLEMENT THIS
+        ledger = new UTXOPool(utxoPool);
     }
 
     /**
@@ -21,7 +26,43 @@ public class TxHandler {
      *     values; and false otherwise.
      */
     public boolean isValidTx(Transaction tx) {
-        // IMPLEMENT THIS
+        ArrayList<Transaction.Output> txOutputs = tx.getOutputs();
+        ArrayList<Transaction.Input> txInputs = tx.getInputs();
+        HashMap<Transaction.Output, Integer> claimedOutputs = new HashMap<Transaction.Output, Integer>();
+
+        int inputSum = 0;
+        // all outputs claimed by {@code tx} are in the current UTXO pool
+        // the signatures on each input of {@code tx} are valid
+        // no UTXO is claimed multiple times by {@code tx}
+        for (int i = 0; i < txInputs.size(); i++) {
+            Transaction.Output output = findCorrespondingOutput(txInputs.get(i));
+            if (output == null) {
+                return false;
+            }
+            if (claimedOutputs.get(output) != null) {
+                return false;
+            }
+            claimedOutputs.put(output, 0);
+
+            if (!Crypto.verifySignature(output.address, tx.getRawDataToSign(i), txInputs.get(i).signature)) {
+                return false;
+            }
+
+            inputSum += output.value;
+        }
+
+        int outputSum = 0;
+        // all of {@code tx}s output values are non-negative
+        for (int i = 0; i < txOutputs.size(); i++) {
+            if (txOutputs.get(i).value < 0) {
+                return false;
+            }
+
+            outputSum += txOutputs.get(i).value;
+        }
+
+        // the sum of {@code tx}s input values is greater than or equal to the sum of its output
+        return inputSum >= outputSum;
     }
 
     /**
@@ -33,4 +74,17 @@ public class TxHandler {
         // IMPLEMENT THIS
     }
 
+
+    private Transaction.Output findCorrespondingOutput(Transaction.Input input) {
+        for (UTXO utxo: ledger.getAllUTXO()) {
+            if (
+                    utxo.getTxHash() == input.prevTxHash
+                            && utxo.getIndex() == input.outputIndex
+                    ) {
+                return ledger.getTxOutput(utxo);
+            }
+        }
+
+        return null;
+    }
 }
