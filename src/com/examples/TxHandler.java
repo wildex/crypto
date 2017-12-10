@@ -42,7 +42,7 @@ public class TxHandler {
             if (claimedOutputs.get(output) != null) {
                 return false;
             }
-            claimedOutputs.put(output, 0);
+            claimedOutputs.put(output, 1);
 
             if (!Crypto.verifySignature(output.address, tx.getRawDataToSign(i), txInputs.get(i).signature)) {
                 return false;
@@ -71,16 +71,40 @@ public class TxHandler {
      * updating the current UTXO pool as appropriate.
      */
     public Transaction[] handleTxs(Transaction[] possibleTxs) {
-        // IMPLEMENT THIS
+        ArrayList<Transaction> validTransactions = new ArrayList<Transaction>();
+        HashMap<Transaction.Output, Integer> spentOutputs = new HashMap<Transaction.Output, Integer>();
+
+        for (Transaction t: possibleTxs) {
+            if (isValidTx(t)) {
+                for (Transaction.Input in: t.getInputs()) {
+                    Transaction.Output output = findCorrespondingOutput(in);
+                    if (spentOutputs.get(output) != null) {
+                        continue;
+                    }
+
+                    spentOutputs.put(output, 1);
+                }
+                // todo: clean up already spent outputs
+
+                // add transaction outputs to ledger
+                for (int i = 0; i < t.getOutputs().size(); i++) {
+                    UTXO utxo = new UTXO(t.getHash(), i);
+                    ledger.addUTXO(utxo, t.getOutputs().get(i));
+                }
+                validTransactions.add(t);
+            }
+        }
+
+        return (Transaction[]) validTransactions.toArray();
     }
 
 
     private Transaction.Output findCorrespondingOutput(Transaction.Input input) {
         for (UTXO utxo: ledger.getAllUTXO()) {
             if (
-                    utxo.getTxHash() == input.prevTxHash
-                            && utxo.getIndex() == input.outputIndex
-                    ) {
+                utxo.getTxHash() == input.prevTxHash
+                        && utxo.getIndex() == input.outputIndex
+            ) {
                 return ledger.getTxOutput(utxo);
             }
         }
