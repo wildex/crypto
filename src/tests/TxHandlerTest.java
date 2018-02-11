@@ -16,53 +16,91 @@ public class TxHandlerTest {
     private KeyPairGenerator keyGen;
 
     @Before
-    public void initLedgers() {
-        pool = new UTXOPool();
-        handler = new TxHandler(pool);
-    }
-
-    @Before
     public void initCrypto() {
         try {
             SecureRandom random = SecureRandom.getInstance("SHA1PRNG", "SUN");
-            keyGen = KeyPairGenerator.getInstance("DSA", "SUN");
+            keyGen = KeyPairGenerator.getInstance("RSA");
             keyGen.initialize(2048, random);
-        } catch (Exception e) {}
-
-    }
-
-    @Before
-    public void dummyData() {
-        try {
-            MessageDigest md = MessageDigest.getInstance( "SHA-256" );
-            KeyPair pair = keyGen.generateKeyPair();
-
-            Transaction t = new Transaction();
-            t.addOutput(42, pair.getPublic());
-            md.update("utxo transaction".getBytes());
-            t.setHash(md.digest());
-            transactionLedger.add(t);
-
-            for (int i = 1; i < 10; i++) {
-                md.update(String.format("%d test transaction", i).getBytes());
-                pair = keyGen.generateKeyPair();
-                t = new Transaction();
-                t.setHash(md.digest());
-
-                t.addOutput(10, pair.getPublic());
-
-                t.addInput(transactionLedger.get(i - 1).getHash(), 0);
-                transactionLedger.add(t);
-            }
-
-
-            UTXO utxo = new UTXO(md.digest(), 0);
-            pool.addUTXO(utxo, t.getOutput(0));
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test
-    public void testValidateTransaction() {
-        handler.handleTxs(transactionLedger.toArray(new Transaction[transactionLedger.size()]));
+    public void testValidTransaction() {
+        pool = new UTXOPool();
+
+        KeyPair pair = keyGen.generateKeyPair();
+
+        Transaction rt = createTransaction("root transaction");
+        rt.addOutput(42, pair.getPublic());
+        UTXO utxo = new UTXO(rt.getHash(), 0);
+        pool.addUTXO(utxo, rt.getOutput(0));
+
+
+        Transaction t;
+
+        try {
+            t = createTransaction("test transaction");
+            t.addInput(rt.getHash(), 0);
+            t.addOutput(21, pair.getPublic());
+            t.addOutput(21, pair.getPublic());
+            t.addSignature(sign(pair.getPrivate(), t.getRawDataToSign(0)), 0);
+        }  catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        handler = new TxHandler(pool);
+        Assert.assertTrue(handler.isValidTx(t));
+    }
+
+    @Test
+    public void testInvalidTransactionMoreOutput() {
+        pool = new UTXOPool();
+
+        KeyPair pair = keyGen.generateKeyPair();
+
+        Transaction rt = createTransaction("root transaction");
+        rt.addOutput(42, pair.getPublic());
+        UTXO utxo = new UTXO(rt.getHash(), 0);
+        pool.addUTXO(utxo, rt.getOutput(0));
+
+
+        Transaction t;
+
+        try {
+            t = createTransaction("test transaction");
+            t.addInput(rt.getHash(), 0);
+            t.addOutput(21, pair.getPublic());
+            t.addOutput(23, pair.getPublic());
+            t.addSignature(sign(pair.getPrivate(), t.getRawDataToSign(0)), 0);
+        }  catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        handler = new TxHandler(pool);
+        Assert.assertFalse(handler.isValidTx(t));
+    }
+
+    private byte[] sign(PrivateKey privateKey, byte[] rawDataToSign) throws NoSuchAlgorithmException, InvalidKeyException, SignatureException {
+        Signature sig = Signature.getInstance("SHA256withRSA");
+        sig.initSign(privateKey);
+        sig.update(rawDataToSign);
+        return sig.sign();
+    }
+
+    private Transaction createTransaction(String name) {
+        Transaction t = new Transaction();
+
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            md.update(name.getBytes());
+
+            t.setHash(md.digest());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        return t;
     }
 }

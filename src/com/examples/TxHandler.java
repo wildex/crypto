@@ -1,6 +1,7 @@
 package com.examples;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 
 public class TxHandler {
@@ -28,21 +29,25 @@ public class TxHandler {
     public boolean isValidTx(Transaction tx) {
         ArrayList<Transaction.Output> txOutputs = tx.getOutputs();
         ArrayList<Transaction.Input> txInputs = tx.getInputs();
-        HashMap<Transaction.Output, Integer> claimedOutputs = new HashMap<Transaction.Output, Integer>();
+        HashMap<UTXO, Integer> claimedUTXOs = new HashMap<UTXO, Integer>();
 
-        int inputSum = 0;
+        double inputSum = 0;
+        double outputSum = 0;
         // all outputs claimed by {@code tx} are in the current UTXO pool
         // the signatures on each input of {@code tx} are valid
         // no UTXO is claimed multiple times by {@code tx}
         for (int i = 0; i < txInputs.size(); i++) {
-            Transaction.Output output = findCorrespondingOutput(txInputs.get(i));
+            UTXO utxo = new UTXO(txInputs.get(i).prevTxHash, txInputs.get(i).outputIndex);
+
+            Transaction.Output output = ledger.getTxOutput(utxo);
             if (output == null) {
                 return false;
             }
-            if (claimedOutputs.get(output) != null) {
+
+            if (claimedUTXOs.get(utxo) != null) {
                 return false;
             }
-            claimedOutputs.put(output, 1);
+            claimedUTXOs.put(utxo, 1);
 
             if (!Crypto.verifySignature(output.address, tx.getRawDataToSign(i), txInputs.get(i).signature)) {
                 return false;
@@ -51,14 +56,13 @@ public class TxHandler {
             inputSum += output.value;
         }
 
-        int outputSum = 0;
         // all of {@code tx}s output values are non-negative
-        for (int i = 0; i < txOutputs.size(); i++) {
-            if (txOutputs.get(i).value < 0) {
+        for (Transaction.Output txOutput : txOutputs) {
+            if (txOutput.value < 0) {
                 return false;
             }
 
-            outputSum += txOutputs.get(i).value;
+            outputSum += txOutput.value;
         }
 
         // the sum of {@code tx}s input values is greater than or equal to the sum of its output
@@ -77,38 +81,43 @@ public class TxHandler {
         for (Transaction t: possibleTxs) {
             if (isValidTx(t)) {
                 for (Transaction.Input in: t.getInputs()) {
-                    Transaction.Output output = findCorrespondingOutput(in);
+                    UTXO utxo = new UTXO(in.prevTxHash, in.outputIndex);
+
+                    Transaction.Output output = ledger.getTxOutput(utxo);
+                    ledger.removeUTXO(utxo);
+
+                    for (Transaction pt: possibleTxs) {
+                        if (Arrays.equals(pt.getHash(), in.prevTxHash) && pt.getOutput(in.outputIndex) != null) {
+                            output = pt.getOutput(in.outputIndex);
+                        }
+                    }
+
+                    if (output == null) {
+                        continue;
+                    }
+
                     if (spentOutputs.get(output) != null) {
                         continue;
                     }
 
                     spentOutputs.put(output, 1);
                 }
-                // todo: clean up already spent outputs
 
                 // add transaction outputs to ledger
                 for (int i = 0; i < t.getOutputs().size(); i++) {
+                    if (spentOutputs.get(t.getOutputs().get(i)) != null) {
+                        continue;
+                    }
+
                     UTXO utxo = new UTXO(t.getHash(), i);
-                    ledger.addUTXO(utxo, t.getOutputs().get(i));
+                    if (!ledger.contains(utxo)) {
+                        ledger.addUTXO(utxo, t.getOutputs().get(i));
+                    }
                 }
                 validTransactions.add(t);
             }
         }
 
-        return (Transaction[]) validTransactions.toArray();
-    }
-
-
-    private Transaction.Output findCorrespondingOutput(Transaction.Input input) {
-        for (UTXO utxo: ledger.getAllUTXO()) {
-            if (
-                utxo.getTxHash() == input.prevTxHash
-                        && utxo.getIndex() == input.outputIndex
-            ) {
-                return ledger.getTxOutput(utxo);
-            }
-        }
-
-        return null;
+        return validTransactions.toArray(new Transaction[validTransactions.size()]);
     }
 }
